@@ -1,33 +1,65 @@
-```python
 import streamlit as st
-import tensorflow as tf
+import numpy as np
 import pickle
-import pandas as pd
-import matplotlib.pyplot as plt
+from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.sequence import pad_sequences
+import plotly.graph_objects as go
 
-# -----------------------------
-# Load Model and Tokenizer
-# -----------------------------
-model = tf.keras.models.load_model("gru_model.h5")
+# ----------------------------
+# Load Models
+# ----------------------------
+model_rnn = load_model("simple_rnn_sentiment_model.h5")
+model_lstm = load_model("lstm_sentiment_model.h5")
+model_gru = load_model("gru_sentiment_model.h5")
 
-with open("tokenizer.pkl", "rb") as file:
-    tokenizer = pickle.load(file)
+# ----------------------------
+# Load Tokenizer
+# ----------------------------
+with open("tokenizer.pkl", "rb") as f:
+    tokenizer = pickle.load(f)
 
-MAX_LEN = 200
+MAX_LENGTH = 200
 
-# -----------------------------
-# Page Configuration
-# -----------------------------
+# ----------------------------
+# Preprocessing Function
+# ----------------------------
+def preprocess_text(text):
+    seq = tokenizer.texts_to_sequences([text])
+    padded = pad_sequences(
+        seq,
+        maxlen=MAX_LENGTH,
+        padding='post',
+        truncating='post'
+    )
+    return padded
+
+# ----------------------------
+# Prediction Function
+# ----------------------------
+def predict_sentiment(model, review):
+
+    processed = preprocess_text(review)
+
+    prediction = model.predict(processed, verbose=0)[0][0]
+
+    sentiment = "Positive" if prediction > 0.5 else "Negative"
+
+    confidence = prediction if prediction > 0.5 else (1 - prediction)
+
+    positive_prob = prediction
+    negative_prob = 1 - prediction
+
+    return sentiment, confidence, positive_prob, negative_prob
+
+# ----------------------------
+# UI
+# ----------------------------
+
 st.set_page_config(
-    page_title="CinePulse AI",
-    page_icon="🎬",
+    page_title="Movie Review Sentiment Analysis",
     layout="wide"
 )
 
-# -----------------------------
-# Header
-# -----------------------------
 st.title("🎬 Movie Review Sentiment Analysis System")
 
 st.subheader(
@@ -36,143 +68,150 @@ st.subheader(
 
 st.markdown("---")
 
-# -----------------------------
-# User Input
-# -----------------------------
-review = st.text_area(
-    "Enter your movie review here...",
-    height=200
+# ----------------------------
+# Model Selection
+# ----------------------------
+
+selected_model = st.radio(
+    "Select Model",
+    ["SimpleRNN", "LSTM", "GRU"]
 )
 
-# -----------------------------
-# Prediction
-# -----------------------------
+review = st.text_area(
+    "Enter your movie review here...",
+    height=150
+)
+
+# ----------------------------
+# Analyze Button
+# ----------------------------
+
 if st.button("Analyze Review"):
 
     if review.strip() == "":
-        st.warning("Please enter a movie review.")
+        st.warning("Please enter a review.")
     else:
 
-        sequence = tokenizer.texts_to_sequences([review])
+        if selected_model == "SimpleRNN":
+            model = model_rnn
 
-        padded = pad_sequences(
-            sequence,
-            maxlen=MAX_LEN,
-            padding="post",
-            truncating="post"
+        elif selected_model == "LSTM":
+            model = model_lstm
+
+        else:
+            model = model_gru
+
+        sentiment, confidence, pos_prob, neg_prob = predict_sentiment(
+            model,
+            review
         )
 
-        prediction = model.predict(
-            padded,
-            verbose=0
-        )[0][0]
-
-        sentiment = (
-            "Positive"
-            if prediction >= 0.5
-            else "Negative"
-        )
-
-        confidence = (
-            prediction
-            if prediction >= 0.5
-            else 1 - prediction
-        )
-
-        positive_prob = prediction * 100
-        negative_prob = (1 - prediction) * 100
-
-        # -----------------------------
-        # Output Area
-        # -----------------------------
-        st.success(
-            f"Sentiment: {sentiment}"
-        )
+        st.success(f"Sentiment: {sentiment}")
 
         st.info(
-            f"Confidence: {confidence * 100:.2f}%"
+            f"Confidence: {confidence*100:.2f}%"
         )
 
-        st.markdown("---")
+        # ------------------------
+        # Probability Chart
+        # ------------------------
 
-        # -----------------------------
-        # Probability Table
-        # -----------------------------
-        st.subheader(
-            "Prediction Probabilities"
+        st.subheader("Probability Distribution")
+
+        fig = go.Figure()
+
+        fig.add_trace(
+            go.Bar(
+                x=["Positive", "Negative"],
+                y=[pos_prob, neg_prob]
+            )
         )
 
-        prob_df = pd.DataFrame({
-            "Sentiment": [
-                "Positive",
-                "Negative"
-            ],
-            "Probability (%)": [
-                round(
-                    positive_prob,
-                    2
-                ),
-                round(
-                    negative_prob,
-                    2
-                )
-            ]
-        })
+        fig.update_layout(
+            title="Positive vs Negative Probability",
+            yaxis_title="Probability"
+        )
 
-        st.dataframe(
-            prob_df,
+        st.plotly_chart(
+            fig,
             use_container_width=True
         )
 
-        # -----------------------------
-        # Bar Chart
-        # -----------------------------
-        st.subheader(
-            "Probability Comparison"
+        # ------------------------
+        # Confidence Gauge
+        # ------------------------
+
+        st.subheader("Confidence Chart")
+
+        gauge = go.Figure(
+            go.Indicator(
+                mode="gauge+number",
+                value=confidence * 100,
+                title={"text": "Confidence %"},
+                gauge={
+                    "axis": {"range": [0, 100]}
+                }
+            )
         )
 
-        chart_df = pd.DataFrame({
-            "Probability": [
-                positive_prob,
-                negative_prob
-            ]
-        },
-        index=[
-            "Positive",
-            "Negative"
-        ])
-
-        st.bar_chart(chart_df)
-
-        # -----------------------------
-        # Pie Chart
-        # -----------------------------
-        st.subheader(
-            "Confidence Chart"
+        st.plotly_chart(
+            gauge,
+            use_container_width=True
         )
 
-        fig, ax = plt.subplots()
+# ----------------------------
+# Compare All Models
+# ----------------------------
 
-        ax.pie(
-            [
-                positive_prob,
-                negative_prob
-            ],
-            labels=[
-                "Positive",
-                "Negative"
-            ],
-            autopct="%1.1f%%"
-        )
-
-        st.pyplot(fig)
-
-# -----------------------------
-# Footer
-# -----------------------------
 st.markdown("---")
 
-st.caption(
-    "CinePulse AI | Movie Review Sentiment Analysis using GRU"
-)
-```
+st.header("Compare All Models")
+
+if st.button("Compare Predictions"):
+
+    if review.strip() == "":
+        st.warning("Please enter a review.")
+    else:
+
+        results = []
+
+        for name, model in [
+            ("SimpleRNN", model_rnn),
+            ("LSTM", model_lstm),
+            ("GRU", model_gru)
+        ]:
+
+            sentiment, confidence, _, _ = predict_sentiment(
+                model,
+                review
+            )
+
+            results.append({
+                "Model": name,
+                "Sentiment": sentiment,
+                "Confidence (%)": round(
+                    confidence * 100,
+                    2
+                )
+            })
+
+        st.dataframe(results)
+
+        comparison_fig = go.Figure()
+
+        comparison_fig.add_trace(
+            go.Bar(
+                x=[r["Model"] for r in results],
+                y=[r["Confidence (%)"] for r in results]
+            )
+        )
+
+        comparison_fig.update_layout(
+            title="Model Confidence Comparison",
+            yaxis_title="Confidence (%)"
+        )
+
+        st.plotly_chart(
+            comparison_fig,
+            use_container_width=True
+        )
